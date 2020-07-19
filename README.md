@@ -7,14 +7,20 @@ ClowdWatch ALARM -> SNS -> LAMBDA -> Action.
 
 After you can use it as you want and send any API request to remediate ALARM case.
 Example:
-> Alarm:
+> Alarm 1:
 > ResourceType: AutoScalingGroupName  
 > MetricName:  CPUUtilization
-> Thershold: 10%
+> ComparisonOperator: GreaterThanOrEqualToThreshold
+> Thershold: 50%
+
+> Alarm 2:
+> ResourceType: AutoScalingGroupName  
+> MetricName:  CPUUtilization
+> ComparisonOperator: LessThanOrEqualToThreshold
+> Thershold: 20%
 
 > SNS:
 > Suscriber: Lambda  
 
 > Lambda:  
-> Action: Scale out up to currentAsgSize + 1  
-
+> Action: Scale out up to currentAsgSize + 1  or currentAsgSize -1

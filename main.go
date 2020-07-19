@@ -27,8 +27,7 @@ func handler(ctx context.Context, event events.SNSEvent) {
 			log.Println("checkEventParameters:", err)
 			return
 		}
-		// fmt.Println("msg", msg)
-		// fmt.Println("Trigger", msg.Trigger)
+
 		// Get resource.ResourceName based on msg dimension
 		for _, resource := range msg.Trigger.Dimensions {
 			if resource.ResourceType == "AutoScalingGroupName" {
@@ -49,12 +48,11 @@ func handler(ctx context.Context, event events.SNSEvent) {
 			return
 		}
 
-		desireValue, err := getDesireValue(asgroup)
+		desireValue, err := getDesireValue(asgroup, msg.Trigger.ComparisonOperator)
 		if err != nil {
 			fmt.Println("getDesireValue:", err)
 			return
 		}
-
 		_, err = remediationEvent(svc, asgroup.AutoScaleGroupName, desireValue)
 		if err != nil {
 			log.Println(err)
@@ -74,11 +72,13 @@ func parseEvent(record *events.SNSEventRecord) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(record.SNS.Message)
 	return msg, nil
 }
 
 func remediationEvent(svc *autoscaling.AutoScaling, resourceName string, desireValue int64) (bool, error) {
 	// one of possible remediation
+
 	isScale, err := scaleAsg(svc, resourceName, desireValue)
 	if err != nil {
 		return false, err
@@ -111,14 +111,20 @@ func scaleAsg(svc *autoscaling.AutoScaling, asgName string, desireValue int64) (
 	return true, nil
 }
 
-// func showEventReason(msg *Message) {
-// 	fmt.Println("AlarmName:", msg.AlarmName)
-// 	fmt.Println("MetricName:", msg.Trigger.MetricName)
-// 	fmt.Printf("Threshold %v value was exceed:", msg.Trigger.Threshold)
-// }
-func getDesireValue(asgroup *AutoScaleGroup) (int64, error) {
+func getDesireValue(asgroup *AutoScaleGroup, ComparisonOperator string) (int64, error) {
 	var count int64
-	var step int64 = 1
+	var step int64
+
+	switch ComparisonOperator {
+	case "GreaterThanOrEqualToThreshold":
+		step = 1
+	case "GreaterThanThreshold":
+		step = 1
+	case "LessThanOrEqualToThreshold":
+		step = -1
+	case "LessThanThreshold":
+		step = -1
+	}
 
 	fmt.Println("Previos ASG instances count:", len(asgroup.Instances))
 
@@ -129,11 +135,17 @@ func getDesireValue(asgroup *AutoScaleGroup) (int64, error) {
 		}
 	}
 
-	if asgroup.MaxSize > count && count >= asgroup.MinSize {
+	// Scale out
+	if count < asgroup.MaxSize && step == 1 {
 		fmt.Println("getDesireValue new value:", count+step)
 		return count + step, nil
 	}
 
+	// Scale in
+	if count > asgroup.MinSize && step == -1 {
+		fmt.Println("getDesireValue new value:", count+step)
+		return count + step, nil
+	}
 	fmt.Println("getDesireValue old value:", count)
-	return count, errors.New("Error: MaxSize exceeded")
+	return count, errors.New("Error: Current desireValue could not be decresed on increased")
 }
