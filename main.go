@@ -15,7 +15,9 @@ import (
 )
 
 func handler(ctx context.Context, event events.SNSEvent) {
+	var asgName string
 	svc := autoscaling.New(session.New())
+
 	for _, record := range event.Records {
 		fmt.Println("EventSource:", record.EventSource)
 		fmt.Println("EventTimestamp:", record.SNS.Timestamp)
@@ -23,13 +25,41 @@ func handler(ctx context.Context, event events.SNSEvent) {
 		msg, err := parseEvent(&record)
 		if err != nil {
 			log.Println("checkEventParameters:", err)
+			return
+		}
+		// fmt.Println("msg", msg)
+		// fmt.Println("Trigger", msg.Trigger)
+		// Get resource.ResourceName based on msg dimension
+		for _, resource := range msg.Trigger.Dimensions {
+			if resource.ResourceType == "AutoScalingGroupName" {
+				asgName = resource.ResourceName
+				fmt.Println("ASG name:", asgName)
+			}
 		}
 
-		isTrue, err := Remediation(svc, msg)
+		output, err := getAsgParameters(svc, asgName)
+		if err != nil {
+			fmt.Println("getAsgParameters:", err)
+			return
+		}
+
+		asgroup, err := parseToAsgInstance(output)
+		if err != nil {
+			fmt.Println("parseToInstance:", err)
+			return
+		}
+
+		desireValue, err := getDesireValue(asgroup)
+		if err != nil {
+			fmt.Println("getDesireValue:", err)
+			return
+		}
+
+		_, err = remediationEvent(svc, asgroup.AutoScaleGroupName, desireValue)
 		if err != nil {
 			log.Println(err)
+			return
 		}
-		fmt.Println("Remediation:", isTrue)
 	}
 }
 
@@ -38,11 +68,8 @@ func main() {
 }
 
 func parseEvent(record *events.SNSEventRecord) (*Message, error) {
-	// Init instance
 	msg := NewMessage()
-	// Create byte array
 	b := []byte(record.SNS.Message)
-
 	err := msg.Unmarshal(b)
 	if err != nil {
 		return nil, err
@@ -50,31 +77,14 @@ func parseEvent(record *events.SNSEventRecord) (*Message, error) {
 	return msg, nil
 }
 
-// Remediation func to align problem
-func Remediation(svc *autoscaling.AutoScaling, msg *Message) (bool, error) {
-	var isTrue bool
-	if msg.Trigger.MetricName == "CPUUtilization" {
-		for _, resource := range msg.Trigger.Dimensions {
-			if resource.ResourceType == "AutoScalingGroupName" {
-				isScale, err := scaleAsg(svc, resource.ResourceName, int64(msg.Trigger.Threshold+1))
-				if err != nil {
-					return false, err
-				}
-				isTrue = isScale
-			} else {
-				log.Println("Unknow resource.ResourceType")
-			}
-		}
-	} else {
-		fmt.Println("Unknown msg.Trigger.MetricName")
+func remediationEvent(svc *autoscaling.AutoScaling, resourceName string, desireValue int64) (bool, error) {
+	// one of possible remediation
+	isScale, err := scaleAsg(svc, resourceName, desireValue)
+	if err != nil {
+		return false, err
 	}
-	return isTrue, nil
-}
-
-func showEventReason(msg *Message) {
-	fmt.Println("AlarmName:", msg.AlarmName)
-	fmt.Println("MetricName:", msg.Trigger.MetricName)
-	fmt.Printf("Threshold %v value was exceed:", msg.Trigger.Threshold)
+	fmt.Println("Remediation:", isScale)
+	return isScale, nil
 }
 
 func scaleAsg(svc *autoscaling.AutoScaling, asgName string, desireValue int64) (bool, error) {
@@ -99,4 +109,31 @@ func scaleAsg(svc *autoscaling.AutoScaling, asgName string, desireValue int64) (
 		}
 	}
 	return true, nil
+}
+
+// func showEventReason(msg *Message) {
+// 	fmt.Println("AlarmName:", msg.AlarmName)
+// 	fmt.Println("MetricName:", msg.Trigger.MetricName)
+// 	fmt.Printf("Threshold %v value was exceed:", msg.Trigger.Threshold)
+// }
+func getDesireValue(asgroup *AutoScaleGroup) (int64, error) {
+	var count int64
+	var step int64 = 1
+
+	fmt.Println("Previos ASG instances count:", len(asgroup.Instances))
+
+	for _, item := range asgroup.Instances {
+		fmt.Printf("instance ID: %s, health status: %s\n", *item.InstanceId, *item.HealthStatus)
+		if *item.LifecycleState == "InService" {
+			count++
+		}
+	}
+
+	if asgroup.MaxSize > count && count >= asgroup.MinSize {
+		fmt.Println("getDesireValue new value:", count+step)
+		return count + step, nil
+	}
+
+	fmt.Println("getDesireValue old value:", count)
+	return count, errors.New("Error: MaxSize exceeded")
 }
