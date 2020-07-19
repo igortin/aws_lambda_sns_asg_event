@@ -1,5 +1,9 @@
 package main
 
+import (
+	"encoding/json"
+)
+
 // Message custom structure for unmarshal record.SNS.Message
 type Message struct {
 	AlarmName       string      `json:"AlarmName"`
@@ -26,4 +30,18 @@ type NewTrigger struct {
 type NewDimension struct {
 	ResourceName string `json:"value"`
 	ResourceType string `json:"name"`
+}
+
+// NewMessage return new message instance
+func NewMessage() *Message {
+	return &Message{}
+}
+
+// Unmarshal method fullfil instance
+func (msg *Message) Unmarshal(b []byte) error {
+	err := json.Unmarshal(b, msg)
+	if err != nil {
+		return err
+	}
+	return nil
 }
